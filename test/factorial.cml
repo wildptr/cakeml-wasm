@@ -1,0 +1,19 @@
+fun factorial n =
+  if n<=1 then 1 else n*factorial(n-1)
+
+val n =
+  case TextIO.inputLine TextIO.stdIn of
+    Some s => let
+    val s' =
+      if String.isSuffix "\n" s then
+        String.substring s 0 (String.size s-1)
+      else s
+    in Int.fromString s' end
+  | None => None
+
+val _ =
+  case n of
+    None => print "?"
+  | Some n => print (Int.toString (factorial n))
+
+val _ = print "\n"

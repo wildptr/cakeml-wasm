@@ -1,0 +1,4 @@
+(executables
+  (names main cake_sexp compile_LabLang)
+  (libraries camlib))
+(env (dev (flags (:standard -g -warn-error -A -w -6-9))))

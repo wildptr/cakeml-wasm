@@ -1,0 +1,2 @@
+(library (name camlib) (wrapped false))
+(env (dev (flags (:standard -g -w -6))))

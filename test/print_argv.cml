@@ -1,0 +1,1 @@
+val _ = List.app (fn x => (print x; print"\n")) (CommandLine.arguments())
