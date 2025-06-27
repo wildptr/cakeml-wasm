@@ -1,5 +1,5 @@
 open Sexp
-open Prog
+open StackLang
 open Util
 
 exception Unknown_Form

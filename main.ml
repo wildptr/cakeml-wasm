@@ -15,7 +15,7 @@ let process_file filepath =
   let functions =
     let a = GList.create() in
     definitions |> List.iter begin fun sexp ->
-      match Parse.parse_toplevel sexp with
+      match StackLang_Parser.parse_toplevel sexp with
       | Some (func_name, func_body) ->
         GList.append a (func_name, func_body)
       | None->()
@@ -104,14 +104,14 @@ let process_file filepath =
     functions |> Array.iteri begin fun i (func_name, func_body) ->
       printf "\n;; %s (func #%d)\n" func_name (num_support_func + i);
       print_endline "(;";
-      Prog.print_prog 0 false stdout func_body;
+      StackLang.print_prog 0 false stdout func_body;
       print_endline ";)";
-      let wasm = Comp.comp_func func_body in
+      let wasm: Wasm.inst list = Comp.comp_func func_body in
       let func_export_name =
         (* HACK *)
         if String.ends_with "@0" func_name then "wa_start" else ""
       in
-      printf "%a\n" (Wasm.pp_wasm 0) (Wasm.make_func (func_name, func_export_name, wasm))
+      printf "%a\n" (Wasm.pp_wasm 0) (Wasm.make_func (func_name, func_export_name, map Wasm.inst_to_sexp wasm))
     end
   else (
     Comp.compile_program_without_tail_calls functions;

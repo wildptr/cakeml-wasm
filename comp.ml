@@ -1,4 +1,4 @@
-open Prog
+open StackLang
 open Sexp
 open Util
 open Wasm
@@ -94,16 +94,16 @@ let dest_addr addr : exp * int =
   | _ -> (addr, 0)
 
 
-let rec comp_exp e c : sexp list =
+let rec comp_exp e c : inst list =
   match e with
   | Const n -> i64_const n :: c
   | Reg i -> get_global i :: c
   | Loc (l, _) -> i64_const (numeric_label_id l*2) :: c
   | Op (op, ss) -> comp_op (op, ss) c
 
-and comp_op (op, ss) c =
+and comp_op (op, ss) c : inst list =
   let extern func_name =
-    (List[Atom"call"; wasm_name func_name] :: c)
+    (Call (wasm_name func_name) :: c)
     |> Array.fold_right comp_exp ss
   in
   match op with
@@ -114,7 +114,7 @@ and comp_op (op, ss) c =
         | Add -> "add" | Sub -> "sub"
         | And -> "and" | Or -> "or" | Xor -> "xor"
       in
-      comp_exp ss.(0) (comp_exp ss.(1) (List[Atom("i64."^op_name)]::c))
+      comp_exp ss.(0) (comp_exp ss.(1) (Regular("i64."^op_name)::c))
     in
     begin match op with
     | Or | And ->
@@ -128,26 +128,29 @@ and comp_op (op, ss) c =
       match op with
       | Lsl -> "shl" | Lsr -> "shr_u" | Asr -> "shr_s" | Ror -> "rotr"
     in
-    comp_exp ss.(0) (comp_exp ss.(1) (List[Atom("i64."^op_name)]::c))
+    comp_exp ss.(0) (comp_exp ss.(1) (Regular("i64."^op_name)::c))
 
   | Rel op ->
     let g c = comp_exp ss.(0) (comp_exp ss.(1) c) in
-    let f op_name = g (List[Atom("i64."^op_name)]::c) in
+    let f op_name = g (Regular("i64."^op_name)::c) in
     begin match op with
     | Equal -> f "eq" | NotEqual -> f "ne"
     | Less -> f "lt_s" | NotLess -> f "ge_s"
     | Lower -> f "lt_u" | NotLower -> f "ge_u"
     | NotTest ->
       g (
-        List[Atom"i64.and"] ::
+(*
+s/List\[Atom\([^]]*\)\]/Regular\1/g
+ *)
+        Regular"i64.and" ::
         i64_const 0 ::
-        List[Atom"i64.ne"] ::
+        Regular"i64.ne" ::
         c
       )
     | Test ->
       g (
-        List[Atom"i64.and"] ::
-        List[Atom"i64.eqz"] ::
+        Regular"i64.and" ::
+        Regular"i64.eqz" ::
         c
       )
     end
@@ -158,13 +161,7 @@ and comp_op (op, ss) c =
       else sprintf "i64.load%d_u" (size*8)
     in
     let base, offset = dest_addr ss.(0) in
-    let op_sexp =
-      if offset=0 then
-        List[Atom op_name]
-      else
-        List[Atom op_name; Atom("offset="^string_of_int offset)]
-    in
-    comp_exp base (List[Atom"i32.wrap_i64"]::op_sexp::c)
+    comp_exp base (Regular"i32.wrap_i64"::Memory(op_name,Memarg{offset})::c)
 
   | Store size ->
     let op_name =
@@ -172,13 +169,7 @@ and comp_op (op, ss) c =
       else sprintf "i64.store%d" (size*8)
     in
     let base, offset = dest_addr ss.(0) in
-    let op_sexp =
-      if offset=0 then
-        List[Atom op_name]
-      else
-        List[Atom op_name; Atom("offset="^string_of_int offset)]
-    in
-    comp_exp base (List[Atom"i32.wrap_i64"] :: comp_exp ss.(1) (op_sexp::c))
+    comp_exp base (Regular"i32.wrap_i64" :: comp_exp ss.(1) (Memory(op_name,Memarg{offset})::c))
 
   | AddCarry -> extern "add_carry"
   | AddOverflow -> extern "add_overflow"
@@ -193,41 +184,44 @@ let comp_cond e c =
       begin match op with
       | Bin _ | Shift _ | Load _ ->
         i64_const 0 ::
-        List[Atom"i64.ne"] ::
+        Regular"i64.ne" ::
         c
       | Rel _ -> c
       | _ -> assert false
       end
     | _ ->
       i64_const 0 ::
-      List[Atom"i64.ne"] ::
+      Regular"i64.ne" ::
       c
   in
   comp_exp e c'
 
+let ftype = ("$Ftype", ([||], [|I32|]))
+let btype = ("$Btype", ([|I32|], [||]))
+
 let comp_call tail dest lr ret exn c =
   let g() =
-    List[Atom"global.set"; int_atom lr; i64_const 0] ::
+    i64_const 0 :: GlobalSet lr ::
     if !use_tail_calls then
       begin match dest with
       | Loc (l,_) ->
-        List [Atom"call"; wasm_name l] ::
-        mk_if exn ret :: c
+        Call (wasm_name l) ::
+        If (default_nft, exn, ret) :: c
       | _ -> (* indirect call *)
-        List [Atom"i32.wrap_i64"] :: i32_const 1 :: List[Atom"i32.shr_u"] ::
-        List [Atom"call_indirect"; List[Atom"type"; Atom"$Ftype"]] ::
-        mk_if exn ret :: c
+        Regular"i32.wrap_i64" :: i32_const 1 :: Regular"i32.shr_u" ::
+        CallIndirect ftype ::
+        If (default_nft, exn, ret) :: c
         |> comp_exp dest
       end
     else (
       begin match dest with
       | Loc (l,_) ->
-        List [Atom"call"; Atom"$cakeml"; i32_const (STable.find func_table l)] ::
-        mk_if exn ret :: c
+        i32_const (STable.find func_table l) :: Call "$cakeml" ::
+        If (default_nft, exn, ret) :: c
       | _ -> (* indirect call *)
-        List [Atom"i32.wrap_i64"] :: i32_const 1 :: List[Atom"i32.shr_u"] ::
-        List [Atom"call"; Atom"$cakeml"] ::
-        mk_if exn ret :: c
+        Regular"i32.wrap_i64" :: i32_const 1 :: Regular"i32.shr_u" ::
+        Call "$cakeml" ::
+        If (default_nft, exn, ret) :: c
         |> comp_exp dest
       end
     )
@@ -236,11 +230,11 @@ let comp_call tail dest lr ret exn c =
     if !use_tail_calls then
       begin match dest with
       | Loc (l,_) ->
-        [List[Atom"return_call"; wasm_name l]]
+        [ReturnCall (wasm_name l)]
       | _ -> (* indirect call *)
         [
-          List [Atom"i32.wrap_i64"]; i32_const 1; List[Atom"i32.shr_u"];
-          List[Atom"return_call_indirect"; List[Atom"type"; Atom"$Ftype"]]
+          Regular"i32.wrap_i64"; i32_const 1; Regular"i32.shr_u";
+          ReturnCallIndirect ftype
         ]
         |> comp_exp dest
       end
@@ -248,21 +242,23 @@ let comp_call tail dest lr ret exn c =
       match dest with
       | Loc (l,_) ->
         let i = STable.find func_table l in
-        [List[Atom"br"; Atom"$DISPATCH"; i32_const i]]
+        [i32_const i; Br(L"$DISPATCH")]
       | _ -> g()
     end
   else g()
 
-let rec comp tail p c : sexp list =
+let rec comp tail p c : inst list =
   match p with
   | Jump (JReturn, _) ->
-    [i32_const 0; List[Atom"return"]]
+    [i32_const 0; Return]
 
   | Jump (JRaise, _) ->
-    [i32_const 1; List[Atom"return"]]
+    [i32_const 1; Return]
 
-  | Jump (JRawCall, _) -> (*XXX*)
-    [Atom"(;raw_call;)"]
+  | Jump (JRawCall, _) ->
+    (* RawCall is not supported! *)
+    (* Disable the stack_rawcall pass in the CakeML compiler. *)
+    [Regular";raw_call;"] (*HACK*)
 
   | TailCall dest ->
     comp_call true dest 0 [] [] c
@@ -283,7 +279,7 @@ let rec comp tail p c : sexp list =
     |> comp_op (op, ss)
 
   | Halt _ ->
-    [ i64_const 2; List[Atom"call"; Atom"$rt_exit"]; List[Atom"unreachable"] ]
+    [ i64_const 2; Call"$rt_exit"; Unreachable ]
 
   | Seq pp ->
     let rec comp_list pp c =
@@ -296,23 +292,24 @@ let rec comp tail p c : sexp list =
     (*Array.fold_right comp pp c*)
 
   | If (cond, p1, p2) ->
-    mk_if (comp tail p1 []) (comp tail p2 []) :: c
+    If (default_nft, comp tail p1 [], comp tail p2 []) :: c
     |> comp_cond cond
 
   | While (cond, p1) ->
     let body =
-      comp_cond cond [mk_if (comp false p1 [List[Atom"br"; int_atom 1]]) []]
+      comp_cond cond [If (default_nft, comp false p1 [Br(I(1))], [])]
     in
-    List(Atom"loop"::body) :: c
+    Loop ("", default_nft, body) :: c
 
   | FFI (entry, ss) ->
-    List[Atom"call"; wasm_name ("ffi_"^entry)] :: c
+    Call (wasm_name ("ffi_"^entry)) :: c
     |> Array.fold_right comp_exp ss
 
-  | Unknown s -> List[Atom";"; s; Atom";"] :: c
+  | Unknown _sexp ->
+    Regular ";unknown StackLang instruction;" :: c (*HACK*)
 
 let comp_func body =
-  comp true body [List[Atom"return"; i32_const 0]]
+  comp true body [i32_const 0; Return]
 
 let compile_program_without_tail_calls functions =
 (*
@@ -332,37 +329,31 @@ let compile_program_without_tail_calls functions =
   begin
     let nb = length functions in
     if nb>0 then
-    let dispatch_loop_body =
+    let dispatch_loop_body: inst list =
       let br_table =
-        let a = GList.create() in
-        GList.append a (Atom"br_table");
-        compiled_functions |> Array.iter begin fun (func_name, _) ->
-          GList.append a (wasm_name func_name)
-        end;
-        GList.append a (Atom"$DEFAULT");
-        List (GList.finish a)
+        BrTable (compiled_functions |> amap (fun (fn, _) -> L (wasm_name fn)), L"$DEFAULT")
       in
-      let a =
+      let a: inst list =
         Array.fold_right begin fun (func_name, func_body) a ->
-          List(Atom"block" :: wasm_name func_name :: List[Atom"type"; Atom"$Btype"] :: a) :: func_body
+          Block (wasm_name func_name, btype, a) :: func_body
         end compiled_functions [br_table]
       in
-      List(Atom"block" :: Atom"$DEFAULT" :: List[Atom"type"; Atom"$Btype"] :: a)
+      [Block ("$DEFAULT", btype, a)]
     in
     let func_body =
       [
-        List[Atom"local.get"; Atom"$entry"];
-        List[Atom"loop"; Atom"$DISPATCH"; List[Atom"type"; Atom"$Btype"]; dispatch_loop_body];
+        LocalGet 0(*$entry*);
+        Loop ("$DISPATCH", btype, dispatch_loop_body);
         i32_const 0;
-        List[Atom"return"]
+        Return
       ]
     in
     List (
       Atom"func" ::
       Atom"$cakeml" ::
-      List[Atom"param"; wasm_name "entry"; Atom"i32"] ::
+      List[Atom"param"; (*wasm_name "entry";*) Atom"i32"] ::
       List[Atom"result"; Atom"i32"] ::
-      func_body
+      map inst_to_sexp func_body
     )
     |> printf "\n%a\n" (Wasm.pp_wasm 0)
   end

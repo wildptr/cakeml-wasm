@@ -27,5 +27,11 @@ CAKE = ~/cake-x64-64/cake_no_rawcall
 %.nodata.wat: %.stackLang.sexp
 	dune exe ./main.exe -- -wasm-tail-call $< > $@
 
+%.notail.nodata.wat: %.stackLang.sexp
+	dune exe ./main.exe -- $< > $@
+
 %.wat: %.nodata.wat %.S
+	./extract-data.pl $^ > $@
+
+%.notail.wat: %.notail.nodata.wat %.S
 	./extract-data.pl $^ > $@
