@@ -113,9 +113,9 @@ my $support = <<'.';
   (i64.add (local.get $a) (local.get $b))
   (i64.add)
   (local.tee $sum)
+  (i64.shr_u (i64.xor (local.get $a) (local.get $b)) (i64.const 63))
+  (i32.wrap_i64)
   (if (result i64)
-    (i64.shr_u (i64.xor (local.get $a) (local.get $b)) (i64.const 63))
-    (i32.wrap_i64)
     (then
       (i64.shr_u (i64.xor (i64.xor (local.get $a) (local.get $b)) (local.get $sum)) (i64.const 63))
     )
