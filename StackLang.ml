@@ -44,7 +44,7 @@ type prog =
   | While of exp * prog
   | Unknown of Sexp.sexp
   (* *)
-  | FancyCall of exp(*target*) * int(*link register*) * prog(*return handler*) * prog(*exception handler*)
+  | FancyCall of exp(*target*) * int(*link register*) * prog(*return handler*) * prog option(*exception handler*)
   | TailCall of exp(*target*)
   | Jump of jump_kind * exp
   | FFI of string * exp array
@@ -153,12 +153,13 @@ let rec print_prog lev ind out p =
   | FancyCall (dest, _, ret_handler, exn_handler) ->
     fprintf out "fancy_call (%a) " pp_exp dest;
     print_prog (lev) false out ret_handler;
-    if exn_handler<>Skip then
-    (
+    begin match exn_handler with
+    | None -> ()
+    | Some exn_handler ->
       indent lev out;
       output_string out "except ";
       print_prog (lev) false out exn_handler;
-    )
+    end
 
   | TailCall dest ->
     fprintf out "tail_call %a;\n" pp_exp dest

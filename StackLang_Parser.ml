@@ -159,9 +159,9 @@ let rec parse_inst sexp =
         let lr = int_of_string lr in
         let ret_h = parse_inst p in
         let exn_h = match exn_h with
-          | Atom"no_handler" -> Skip
+          | Atom"no_handler" -> None
           | List[Atom"handler"; _; _; p] ->
-            parse_inst p
+            Some (parse_inst p)
           | _ -> raise Unknown_Form
         in
         FancyCall (dest, lr, ret_h, exn_h)

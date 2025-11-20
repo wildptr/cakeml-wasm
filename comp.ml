@@ -265,7 +265,10 @@ let rec comp tail p c : inst list =
 
   | FancyCall (dest, lr, ret_handler, exn_handler) ->
     let ret = comp tail ret_handler [] in
-    let exn = comp tail exn_handler [] in
+    let exn = match exn_handler with
+      | None -> [i32_const 1; Return] (* propagate exception to caller *)
+      | Some exn_handler -> comp tail exn_handler []
+    in
     comp_call tail dest lr ret exn c
 
   | Skip -> c
